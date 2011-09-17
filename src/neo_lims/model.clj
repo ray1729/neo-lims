@@ -13,6 +13,8 @@
   (neo/create-child! rel-type {:name name}))
 
 (defn- sanitize-prop-val
+  "Ensure that the property value v is suitable for a neo4j properties container. At
+   the moment, just casts BigInteger to long, but could do more."
   [v]
   (if (= (class v) (class 1M)) (long v) v))
 
@@ -93,9 +95,35 @@
   [mgi_accession_id]
   (get-single-node-via-index "Genes" "mgi_accession_id" mgi_accession_id))
 
+(defn get-designs-for-marker
+  [marker_symbol]
+  (when-let [g (get-gene-by-marker marker_symbol)]
+    (map neo/start-node (neo/rels g :knocks-out :in))))
+
 (defn get-design-by-id
   [design_id]
   (get-single-node-via-index "Designs" "design_id" design_id))
+
+(defn get-well-by-name
+  [well_name]
+  (get-single-node-via-index "Wells" "well_name" well_name))
+
+(defn get-ancestors-of-well
+  [well_name]
+  (when-let [well-node (get-well-by-name well_name)]
+    (neo/traverse well-node :child-of)))
+
+(defn get-design-node-from-well-node
+  [well-node]
+  (when-let [ancestors (neo/traverse well-node :child-of)]
+    (when-let [design-rel (neo/single-rel (last ancestors) :instance-of-design)]
+      (neo/end-node design-rel))))
+
+(defn get-gene-node-from-well-node
+  [well-node]
+  (when-let [design-node (get-design-node-from-well-node well-node)]
+    (when-let [gene-rel (neo/single-rel design-node :knocks-out)]
+      (neo/end-node gene-rel))))
 
 (defn fetch-genes
   ([]

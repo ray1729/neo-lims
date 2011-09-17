@@ -3,8 +3,6 @@
   (:require [borneo.core :as neo]
             [clojure.string :as str]))
 
-(def *db-path* "/tmp/neo-lims")
-
 (defn- get-subref-node
   [rel-type]
   (when-let [r (neo/single-rel (neo/root) rel-type :out)]
@@ -14,11 +12,16 @@
   [rel-type name]
   (neo/create-child! rel-type {:name name}))
 
+(defn- sanitize-prop-val
+  [v]
+  (if (= (class v) (class 1M)) (long v) v))
+
 (defn- create-node
   [type props]
   (let [store-name (plural type)
         subref-rel-type (keyword (str/lower-case store-name))
-        node-rel-type (keyword (str/lower-case type))]
+        node-rel-type (keyword (str/lower-case type))
+        props (zipmap (keys props) (map sanitize-prop-val (vals props)))]
     (neo/with-tx
       (let [subref-node (or (get-subref-node subref-rel-type)
                              (create-subref-node subref-rel-type store-name))]
@@ -33,8 +36,8 @@
   (when (seq attrs)
     (let [index (get-node-index index-name)]
       (doseq [attr attrs]
-        (when-let [value (get props attr)]
-          (.add index node (name attr) value))))))
+        (let [value (get props attr)]
+          (when (not (nil? value)) (.add index node (name attr) value)))))))
 
 (defn- get-single-node-via-index
   [index-name key value]
@@ -54,17 +57,33 @@
       (index-node-attrs "Designs" design-node design :design_id)
       design-node)))
 
-(defn associate-design-with-gene
-  [design gene]
-  (neo/create-rel! design :knocks-out gene))
-
 (defn- unqualified-well-name
   [well-name]
   (str/upper-case (subs well-name (- (count well-name) 3))))
 
 (defn- plate-qualified-well-name
-  [plate-name well-name]
-  (str (str/upper-case plate-name) "_" (unqualified-well-name well-name)))
+  [{:keys [plate_name well_name]}]
+  (str (str/upper-case plate_name) "_" (unqualified-well-name well_name)))
+
+(defn create-well
+  [well]
+  (neo/with-tx
+    (let [well (assoc well :well_name (plate-qualified-well-name well))
+          well-node (create-node "Well" well)]
+      (index-node-attrs "Wells" well-node well :plate_name :well_name)
+      well-node)))
+
+(defn associate-design-with-gene
+  [design gene]
+  (neo/create-rel! design :knocks-out gene))
+
+(defn associate-well-with-design
+  [well design]
+  (neo/create-rel! well :instance-of-design design))
+
+(defn associate-child-well-with-parent
+  [child-well parent-well]
+  (neo/create-rel! child-well :child-of parent-well))
 
 (defn get-gene-by-marker
   [marker_symbol]
@@ -76,7 +95,7 @@
 
 (defn get-design-by-id
   [design_id]
-  (get-single-node-via-index "Designs" "design_id" desgin_id))
+  (get-single-node-via-index "Designs" "design_id" design_id))
 
 (defn fetch-genes
   ([]
@@ -84,16 +103,10 @@
   ([wanted]
      (doall (map neo/props (neo/traverse (get-subref-node :genes) :gene)))))
 
-(defn purge-genes
-  []
-  (neo/with-tx
-    (doseq [g (neo/traverse (get-subref-node :genes) :gene)]
-      (doseq [r (neo/rels g :gene)]
-        (neo/delete! r))
-      (neo/delete! g))))
-
-(comment
-  (neo/with-db! *db-path*
-    (create-gene {:mgi_accession_id "MGI:105369" :marker_symbol "Cbx1"})
-    (create-gene {:mgi_accession_id "MGI:1202710" :marker_symbol "Art4"})
-    (create-gene {:mgi_accession_id "MGI:1349215" :marker_symbol "Abcd1"})))
+;; (defn purge-genes
+;;   []
+;;   (neo/with-tx
+;;     (doseq [g (neo/traverse (get-subref-node :genes) :gene)]
+;;       (doseq [r (neo/rels g :gene)]
+;;         (neo/delete! r))
+;;       (neo/delete! g))))

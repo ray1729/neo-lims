@@ -25,7 +25,7 @@
              (optional ["--log-file" "Path to write migration log"])
              (optional ["--debug" "Log debug messages" :default false])
              (optional ["--verbose" "Log info messages" :default true])
-             (optional ["--limit" "Maximum number of genes to process"] #(Integer. %)))]
+             (optional ["--limit" "Maximum number of genes to process" :default 0] #(Integer. %)))]
     (init-logging log-file debug verbose)
     (neo/with-db! db-path (do-migrate limit))))
 

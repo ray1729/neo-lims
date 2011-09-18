@@ -3,6 +3,14 @@
   (:require [borneo.core :as neo]
             [clojure.string :as str]))
 
+;; Neo4j transaction level is read-committed, so find-or-create
+;; operations need an explicit lock.
+(def plate-sentinel (Object.))
+
+(defmacro with-plate-lock
+  [& body]
+  `(locking plate-sentinel ~@body))
+
 (defn- get-subref-node
   [rel-type]
   (when-let [r (neo/single-rel (neo/root) rel-type :out)]
@@ -59,21 +67,20 @@
       (index-node-attrs "Designs" design-node design :design_id)
       design-node)))
 
-(defn- unqualified-well-name
-  [well-name]
-  (str/upper-case (subs well-name (- (count well-name) 3))))
-
-(defn- plate-qualified-well-name
-  [{:keys [plate_name well_name]}]
-  (str (str/upper-case plate_name) "_" (unqualified-well-name well_name)))
-
 (defn create-well
-  [well]
+  [plate-node well]
   (neo/with-tx
-    (let [well (assoc well :well_name (plate-qualified-well-name well))
-          well-node (create-node "Well" well)]
-      (index-node-attrs "Wells" well-node well :plate_name :well_name)
+    (let [well-node (create-node "Well" well)]
+      (neo/create-rel! well-node :on-plate plate-node)
+      (index-node-attrs "Wells" well-node well :well_name)
       well-node)))
+
+(defn create-plate
+  [plate]
+  (neo/with-tx
+    (let [plate-node (create-node "Plate" plate)]
+      (index-node-attrs "Plates" plate-node plate :plate_name)
+      plate-node)))
 
 (defn associate-design-with-gene
   [design gene]
@@ -107,6 +114,10 @@
 (defn get-well-by-name
   [well_name]
   (get-single-node-via-index "Wells" "well_name" well_name))
+
+(defn get-plate-by-name
+  [plate_name]
+  (get-single-node-via-index "Plates" "plate_name" plate_name))
 
 (defn get-ancestors-of-well
   [well_name]
